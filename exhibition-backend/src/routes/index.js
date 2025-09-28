@@ -15,6 +15,8 @@ router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/add-exhi', addExhiRoutes)
 router.use('/lookups', lookups);
+console.log('Auth routes loaded:', Object.keys(authRoutes));
+
 // router.use('/events', eventRoutes);
 // router.use('/gst', gstRoutes);
 

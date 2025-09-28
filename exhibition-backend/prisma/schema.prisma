@@ -7,39 +7,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model addexhi {
-  id                    String   @id
-  title                 String
-  contactPhone          String?
-  venueAddress          String?
-  eventImages           String?
-  registrationDocuments String?
-  eventType             String?
-  startingTicketPrice   Float?
-  description           String?
-  totalStalls           Int?
-  amenities             String?
-  location              String?
-  termsAccepted         Boolean  @default(false)
-  status                String   @default("DRAFT")
-  organizerId           String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime
-  user                  user?    @relation(fields: [organizerId], references: [id], map: "AddExhi_organizerId_fkey")
-
-  @@index([organizerId], map: "AddExhi_organizerId_fkey")
-}
-
-model event {
-  id           String   @id
-  title        String
-  description  String?
-  date         DateTime
-  price        Float
-  totalTickets Int
+model user {
+  id           String   @id @default(uuid())
+  name         String?
+  email        String?  @unique
+  phone        String?  @unique
+  passwordHash String?
+  role         String   @default("organizer")
+  isVerified   Boolean  @default(false)
+  refreshToken String?
   createdAt    DateTime @default(now())
-  updatedAt    DateTime
-  ticket       ticket[]
+  updatedAt    DateTime @updatedAt
+
+  // relations
+  addexhi          addexhi[]
+  organizerprofile organizerprofile? @relation("OrganizerProfileToUser")
 }
 
 model Location {
@@ -61,7 +43,7 @@ model EventType {
 }
 
 model organizerprofile {
-  id                String   @id
+  id                String   @id @default(uuid())
   userId            String   @unique(map: "OrganizerProfile_userId_key")
   panNumber         String?
   panFileName       String?
@@ -70,12 +52,37 @@ model organizerprofile {
   ifsc              String?
   accountHolderName String?
   createdAt         DateTime @default(now())
-  updatedAt         DateTime
-  user              user     @relation(fields: [userId], references: [id], map: "OrganizerProfile_userId_fkey")
+  updatedAt         DateTime @updatedAt
+
+  // relation to user (explicit name must match the other side)
+  user user @relation("OrganizerProfileToUser", fields: [userId], references: [id], map: "OrganizerProfile_userId_fkey")
+}
+
+model addexhi {
+  id                    String   @id @default(uuid())
+  title                 String
+  contactPhone          String?
+  venueAddress          String?
+  eventImages           String?
+  registrationDocuments String?
+  eventType             String?
+  startingTicketPrice   Float?
+  description           String?
+  totalStalls           Int?
+  amenities             String?
+  location              String?
+  termsAccepted         Boolean  @default(false)
+  status                String   @default("DRAFT")
+  organizerId           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  user?    @relation(fields: [organizerId], references: [id])
+
+  tickets ticket[]
 }
 
 model ticket {
-  id          String   @id
+  id          String   @id @default(uuid())
   buyerName   String
   phone       String
   email       String?
@@ -83,27 +90,15 @@ model ticket {
   amount      Float
   qrCodeUrl   String?
   qrPayload   String?  @db.Text
-  status      String   @default("PENDING")
+  status      String   @default("CONFIRMED")
   uploadImage String?
   youtubeUrl  String?
   eventId     String
   createdAt   DateTime @default(now())
-  event       event    @relation(fields: [eventId], references: [id], map: "Ticket_eventId_fkey")
+
+  updatedAt DateTime @default(now()) @updatedAt
+
+  event addexhi @relation(fields: [eventId], references: [id])
 
   @@index([eventId], map: "Ticket_eventId_fkey")
-}
-
-model user {
-  id               String            @id
-  name             String
-  email            String            @unique(map: "User_email_key")
-  phone            String?           @unique(map: "User_phone_key")
-  passwordHash     String
-  role             String            @default("organizer")
-  isVerified       Boolean           @default(false)
-  refreshToken     String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime
-  addexhi          addexhi[]
-  organizerprofile organizerprofile?
 }

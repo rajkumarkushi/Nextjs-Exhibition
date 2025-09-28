@@ -1,7 +1,12 @@
 // src/services/authService.js
 const prisma = require('../prismaClient');
 const { hashPassword, comparePassword } = require('../utils/hash');
-const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
+const { signAccessToken, signRefreshToken } = require('../utils/jwt');
+
+function normalizePhone(phone) {
+  if (!phone) return null;
+  return String(phone).replace(/\D/g, ''); // digits only
+}
 
 async function register(payload) {
   const {
@@ -25,7 +30,7 @@ async function register(payload) {
   }
 
   const emailNorm = String(email).trim().toLowerCase();
-  const phoneNorm = phone ? String(phone).replace(/\D/g, '') : null;
+  const phoneNorm = normalizePhone(phone);
 
   // Check unique email
   const existingEmail = await prisma.user.findUnique({ where: { email: emailNorm } });
@@ -59,8 +64,9 @@ async function register(payload) {
     }
   });
 
-  // Create organizer profile (only PAN + bank fields)
-  await prisma.organizerProfile.create({
+  // Create organizer profile (note the Prisma model name is organizerprofile)
+  // If your Prisma model name differs, adjust this to match exactly.
+  await prisma.organizerprofile.create({
     data: {
       userId: user.id,
       panNumber: panNumber ?? null,

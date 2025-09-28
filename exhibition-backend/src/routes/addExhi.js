@@ -1,21 +1,13 @@
-// src/routes/addExhi.js
 const express = require('express');
 const router = express.Router();
-const controller = require('../controllers/addExhiController');
+const ctrl = require('../controllers/addExhiController');
+const auth = require('../middleware/auth');
 
-// create an exhibition
-router.post('/', controller.createAddExhi);
-
-// list all exhibitions (query params allowed)
-router.get('/', controller.listAddExhi);
-
-// get single
-router.get('/:id', controller.getAddExhi);
-
-// update
-router.put('/:id', controller.updateAddExhi);
-
-// delete
-router.delete('/:id', controller.deleteAddExhi);
+router.post('/', auth, ctrl.createAddExhi);
+router.get('/', ctrl.listAddExhi);
+router.get('/my', auth, ctrl.listMyAddExhi);
+router.get('/:id', ctrl.getAddExhi);
+router.put('/:id', auth, ctrl.updateAddExhi);
+router.delete('/:id', auth, ctrl.deleteAddExhi);
 
 module.exports = router;
