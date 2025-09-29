@@ -3,11 +3,13 @@ const prisma = require('../prismaClient');
 const { hashPassword, comparePassword } = require('../utils/hash');
 const { signAccessToken, signRefreshToken } = require('../utils/jwt');
 
+// ----------------- Helper -----------------
 function normalizePhone(phone) {
   if (!phone) return null;
   return String(phone).replace(/\D/g, ''); // digits only
 }
 
+// ----------------- Register (with tokens) -----------------
 async function register(payload) {
   const {
     name,
@@ -22,7 +24,6 @@ async function register(payload) {
     accountHolderName
   } = payload || {};
 
-  // Basic validation
   if (!name || !email || !password) {
     const e = new Error('Missing required fields: name, email, password');
     e.status = 400;
@@ -32,40 +33,21 @@ async function register(payload) {
   const emailNorm = String(email).trim().toLowerCase();
   const phoneNorm = normalizePhone(phone);
 
-  // Check unique email
-  const existingEmail = await prisma.user.findUnique({ where: { email: emailNorm } });
-  if (existingEmail) {
-    const e = new Error('Email already in use');
-    e.status = 400;
-    throw e;
+  // Uniqueness checks
+  if (await prisma.user.findUnique({ where: { email: emailNorm } })) {
+    const e = new Error('Email already in use'); e.status = 400; throw e;
+  }
+  if (phoneNorm && await prisma.user.findUnique({ where: { phone: phoneNorm } })) {
+    const e = new Error('Phone number already in use'); e.status = 400; throw e;
   }
 
-  // Check unique phone if provided
-  if (phoneNorm) {
-    const existingPhone = await prisma.user.findUnique({ where: { phone: phoneNorm } }).catch(() => null);
-    if (existingPhone) {
-      const e = new Error('Phone number already in use');
-      e.status = 400;
-      throw e;
-    }
-  }
-
-  // Hash password
   const passwordHash = await hashPassword(password);
 
-  // Create user
   const user = await prisma.user.create({
-    data: {
-      name,
-      email: emailNorm,
-      phone: phoneNorm,
-      passwordHash,
-      role: 'organizer'
-    }
+    data: { name, email: emailNorm, phone: phoneNorm, passwordHash, role: 'organizer' }
   });
 
-  // Create organizer profile (note the Prisma model name is organizerprofile)
-  // If your Prisma model name differs, adjust this to match exactly.
+  // create organizer profile
   await prisma.organizerprofile.create({
     data: {
       userId: user.id,
@@ -82,7 +64,6 @@ async function register(payload) {
   const accessToken = signAccessToken({ userId: user.id, role: user.role });
   const refreshTokenPlain = signRefreshToken({ userId: user.id });
 
-  // Optionally store hashed refresh token
   const refreshTokenHash = await hashPassword(refreshTokenPlain);
   await prisma.user.update({ where: { id: user.id }, data: { refreshToken: refreshTokenHash } });
 
@@ -90,30 +71,61 @@ async function register(payload) {
   return { user: safeUser, accessToken, refreshToken: refreshTokenPlain };
 }
 
-async function login(email, password) {
-  if (!email || !password) {
-    const e = new Error('Missing email or password');
+// ----------------- Register (NO tokens) -----------------
+async function createUserOnly(payload) {
+  const { name, email, password, phone } = payload || {};
+  if (!name || !email || !password) {
+    const e = new Error('Missing required fields: name, email, password');
     e.status = 400;
     throw e;
   }
 
   const emailNorm = String(email).trim().toLowerCase();
+  const phoneNorm = normalizePhone(phone);
+
+  if (await prisma.user.findUnique({ where: { email: emailNorm } })) {
+    const e = new Error('Email already in use'); e.status = 400; throw e;
+  }
+  if (phoneNorm && await prisma.user.findUnique({ where: { phone: phoneNorm } })) {
+    const e = new Error('Phone number already in use'); e.status = 400; throw e;
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  const user = await prisma.user.create({
+    data: { name, email: emailNorm, phone: phoneNorm, passwordHash, role: 'organizer', isVerified: false }
+  });
+
+  // create skeleton organizer profile (optional)
+  try {
+    await prisma.organizerprofile.create({ data: { userId: user.id } });
+  } catch (e) {
+    // ignore if organizerprofile not required
+  }
+
+  return user;
+}
+
+// ----------------- Login -----------------
+async function login(email, password) {
+  if (!email || !password) {
+    const e = new Error('Missing email or password'); e.status = 400; throw e;
+  }
+
+  const emailNorm = String(email).trim().toLowerCase();
   const user = await prisma.user.findUnique({ where: { email: emailNorm } });
   if (!user) {
-    const e = new Error('Invalid credentials');
-    e.status = 401;
-    throw e;
+    const e = new Error('Invalid credentials'); e.status = 401; throw e;
   }
 
   const ok = await comparePassword(password, user.passwordHash);
   if (!ok) {
-    const e = new Error('Invalid credentials');
-    e.status = 401;
-    throw e;
+    const e = new Error('Invalid credentials'); e.status = 401; throw e;
   }
 
   const accessToken = signAccessToken({ userId: user.id, role: user.role });
   const refreshTokenPlain = signRefreshToken({ userId: user.id });
+
   const refreshTokenHash = await hashPassword(refreshTokenPlain);
   await prisma.user.update({ where: { id: user.id }, data: { refreshToken: refreshTokenHash } });
 
@@ -121,4 +133,9 @@ async function login(email, password) {
   return { user: safeUser, accessToken, refreshToken: refreshTokenPlain };
 }
 
-module.exports = { register, login };
+// ----------------- Exports -----------------
+module.exports = {
+  register,        // full register (with tokens)
+  createUserOnly,  // no tokens
+  login
+};

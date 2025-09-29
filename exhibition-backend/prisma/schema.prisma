@@ -25,21 +25,23 @@ model user {
 }
 
 model Location {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  slug      String?  @unique
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String?   @unique
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  addexhi   addexhi[]
 }
 
 model EventType {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  slug      String?  @unique
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String    @id @default(uuid())
+  name      String    @unique
+  slug      String?   @unique
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  addexhi   addexhi[]
 }
 
 model organizerprofile {
@@ -66,19 +68,27 @@ model addexhi {
   eventImages           String?
   registrationDocuments String?
   eventType             String?
+  eventTypeId           String? // FK to EventType
   startingTicketPrice   Float?
   description           String?
   totalStalls           Int?
   amenities             String?
   location              String?
+  locationId            String? // FK to Location
   termsAccepted         Boolean  @default(false)
   status                String   @default("DRAFT")
   organizerId           String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
-  user                  user?    @relation(fields: [organizerId], references: [id])
 
-  tickets ticket[]
+  user         user?      @relation(fields: [organizerId], references: [id])
+  locationRel  Location?  @relation(fields: [locationId], references: [id])
+  eventTypeRel EventType? @relation(fields: [eventTypeId], references: [id])
+  ticket       ticket[]
+
+  @@index([organizerId])
+  @@index([locationId])
+  @@index([eventTypeId])
 }
 
 model ticket {

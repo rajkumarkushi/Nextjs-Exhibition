@@ -14,12 +14,18 @@ const ACCESS_TOKEN_MAXAGE_MS = (Number(process.env.ACCESS_TOKEN_EXPIRES_MINUTES 
 const REFRESH_TOKEN_MAXAGE_MS = REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60 * 1000;
 
 // ----------------- register / login (reuse authService) -----------------
+// remove token issuing on register; only create user
+
 async function register(req, res) {
   try {
-    const result = await authService.register(req.body);
-    return res.status(201).json(result);
+    // use createUserOnly to create user without issuing tokens
+    const user = await authService.createUserOnly(req.body);
+    return res.status(201).json({
+      ok: true,
+      user: { id: user.id, email: user.email, phone: user.phone, name: user.name }
+    });
   } catch (err) {
-    console.error('register error:', err);
+    console.error('register error:', err && err.stack ? err.stack : err);
     return res.status(err.status || 400).json({ error: err.message || 'Registration failed' });
   }
 }
@@ -71,38 +77,47 @@ async function sendOtp(req, res) {
 async function verifyOtp(req, res) {
   try {
     const { phone, otp } = req.body;
-    if (!phone || !otp) return res.status(400).json({ error: "phone and otp required" });
+    if (!phone || !otp) {
+      return res.status(400).json({ error: "phone and otp required" });
+    }
 
+    // call provider
     const resp = await axios.post(`${OTP_BASE}/mobile-verify-otp`, { phone, otp });
     const providerData = resp?.data;
     console.log("OTP provider response:", JSON.stringify(providerData));
 
-    // permissive detection for provider success
+    // check if provider says success
     const ok =
       providerData &&
       (providerData.success === true ||
-       providerData.status === true ||
-       providerData.status === 'success' ||
-       (typeof providerData.message === 'string' && providerData.message.toLowerCase().includes('verified')) ||
-       providerData.code === 200);
+        providerData.status === true ||
+        providerData.status === "success" ||
+        (typeof providerData.message === "string" &&
+          providerData.message.toLowerCase().includes("verified")) ||
+        providerData.code === 200);
 
     if (!ok) {
       const msg = providerData?.message || providerData?.error || JSON.stringify(providerData);
-      console.warn('OTP verify failed - provider:', msg);
+      console.warn("OTP verify failed - provider:", msg);
       return res.status(400).json({ ok: false, provider: providerData });
     }
 
-    // create placeholder email if email column still required (remove after making email nullable)
-    const placeholderEmail = `${String(phone).replace(/\D/g, '')}@noemail.local`;
+    // make placeholder email if column is still required
+    const placeholderEmail = `${String(phone).replace(/\D/g, "")}@noemail.local`;
 
-    // find or create user (phone unique)
+    // find or create user
     let user = await prisma.user.findUnique({ where: { phone } });
     if (!user) {
       user = await prisma.user.create({
         data: { phone, email: placeholderEmail, role: "organizer", isVerified: true }
       });
+      console.log("verifyOtp -> created new user:", user.id);
     } else if (!user.isVerified) {
-      user = await prisma.user.update({ where: { id: user.id }, data: { isVerified: true }});
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { isVerified: true }
+      });
+      console.log("verifyOtp -> updated user to isVerified:", user.id);
     }
 
     // issue tokens
@@ -111,7 +126,12 @@ async function verifyOtp(req, res) {
 
     // store hashed refresh token
     const refreshTokenHash = await hashPassword(refreshTokenPlain);
-    await prisma.user.update({ where: { id: user.id }, data: { refreshToken: refreshTokenHash }});
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: refreshTokenHash }
+    });
+
+    console.log("verifyOtp -> issued tokens for user:", user.id);
 
     // set cookies
     const cookieOptions = {
@@ -119,15 +139,22 @@ async function verifyOtp(req, res) {
       secure: COOKIE_SECURE,
       sameSite: COOKIE_SAME_SITE,
       domain: COOKIE_DOMAIN || undefined,
-      path: '/'
+      path: "/"
     };
-    res.cookie('accessToken', accessToken, { ...cookieOptions, maxAge: ACCESS_TOKEN_MAXAGE_MS });
-    res.cookie('refreshToken', refreshTokenPlain, { ...cookieOptions, maxAge: REFRESH_TOKEN_MAXAGE_MS });
+    res.cookie("accessToken", accessToken, { ...cookieOptions, maxAge: ACCESS_TOKEN_MAXAGE_MS });
+    res.cookie("refreshToken", refreshTokenPlain, { ...cookieOptions, maxAge: REFRESH_TOKEN_MAXAGE_MS });
 
-    return res.json({ ok: true, user: { id: user.id, phone: user.phone, role: user.role }, accessToken, refreshToken: refreshTokenPlain, provider: providerData });
+    // return tokens + user + provider info
+    return res.json({
+      ok: true,
+      user: { id: user.id, phone: user.phone, role: user.role },
+      accessToken,
+      refreshToken: refreshTokenPlain,
+      provider: providerData
+    });
   } catch (err) {
-    console.error('verifyOtp error', err?.response?.data || err.message || err);
-    return res.status(500).json({ error: 'OTP verification failed', detail: err?.response?.data || err?.message });
+    console.error("verifyOtp error", err?.response?.data || err.message || err);
+    return res.status(500).json({ error: "OTP verification failed", detail: err?.response?.data || err?.message });
   }
 }
 
@@ -201,11 +228,72 @@ async function logout(req, res) {
   }
 }
 
+// update profile (authenticated) - PUT /api/auth/me
+async function updateProfile(req, res) {
+  try {
+    const userId = req.user && req.user.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // allowed fields to update
+    const { name, email, phone, password, panNumber, panFileName, bankName, accountNumber, ifsc, accountHolderName } = req.body || {};
+
+    const data = {};
+    if (name) data.name = name;
+    if (email) data.email = String(email).trim().toLowerCase();
+    if (phone) data.phone = String(phone).replace(/\D/g, '');
+    if (password) {
+      // hash password before storing
+      const hashed = await hashPassword(password);
+      data.passwordHash = hashed;
+    }
+
+    // update user basic fields
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data
+    });
+
+    // update organizer profile details (create if missing)
+    const profileData = {};
+    if (panNumber !== undefined) profileData.panNumber = panNumber;
+    if (panFileName !== undefined) profileData.panFileName = panFileName;
+    if (bankName !== undefined) profileData.bankName = bankName;
+    if (accountNumber !== undefined) profileData.accountNumber = accountNumber;
+    if (ifsc !== undefined) profileData.ifsc = ifsc;
+    if (accountHolderName !== undefined) profileData.accountHolderName = accountHolderName;
+
+    if (Object.keys(profileData).length > 0) {
+      // try update, or create if missing
+      const existing = await prisma.organizerprofile.findUnique({ where: { userId }});
+      if (existing) {
+        await prisma.organizerprofile.update({ where: { userId }, data: profileData });
+      } else {
+        await prisma.organizerprofile.create({ data: { userId, ...profileData }});
+      }
+    }
+
+    // return minimal safe user
+    const safeUser = {
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      phone: updatedUser.phone,
+      role: updatedUser.role,
+      isVerified: updatedUser.isVerified
+    };
+    return res.json({ ok: true, user: safeUser });
+  } catch (err) {
+    console.error('updateProfile error', err && err.stack ? err.stack : err);
+    return res.status(err.status || 500).json({ error: err.message || 'Failed to update profile' });
+  }
+}
+
+
 module.exports = {
   register,
   login,
   sendOtp,
   verifyOtp,
   refreshToken,
-  logout
+  logout,updateProfile
 };
